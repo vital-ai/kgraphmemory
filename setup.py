@@ -9,7 +9,7 @@ setup(
     long_description=open('README.md').read(),
     long_description_content_type='text/markdown',
     url='https://github.com/vital-ai/kgraphmemory',
-    packages=find_packages(),
+    packages=find_packages(exclude=["test"]),
     license='Apache License 2.0',
     install_requires=[
             'vital-ai-vitalsigns',

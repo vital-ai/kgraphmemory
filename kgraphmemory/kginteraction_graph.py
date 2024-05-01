@@ -1,0 +1,3 @@
+
+class KGInteractionGraph:
+    pass
