@@ -256,7 +256,7 @@ def main():
     graph_results = graph.search_entity_frame_slots(
         'president',
         'biography',
-        'voting')
+        'death')
 
     result_count = len(graph_results)
 
