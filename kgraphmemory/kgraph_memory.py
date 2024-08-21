@@ -16,6 +16,9 @@ class KGraphMemoryMeta(type):
 # this allows the description text to be used in vector search
 # to find instances of interest
 
+# TODO
+# update to maintain a list of N graphs, similar to graph store with graph URIs
+
 
 class KGraphMemory(metaclass=KGraphMemoryMeta):
 

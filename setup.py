@@ -21,7 +21,7 @@ setup(
             'SPARQLWrapper>=2.0.0',
             'networkx',
             'matplotlib',
-            'transformers==4.41.2',
+            # 'transformers==4.41.2',
             'kgraphservice>=0.0.6'
     ],
     classifiers=[
