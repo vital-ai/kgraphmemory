@@ -12,7 +12,7 @@ setup(
     packages=find_packages(exclude=["test"]),
     license='Apache License 2.0',
     install_requires=[
-            'vital-ai-vitalsigns>=0.1.19',
+            'vital-ai-vitalsigns>=0.1.26',
             'vital-ai-domain>=0.1.6',
             'six',
             'pyyaml',
@@ -22,7 +22,7 @@ setup(
             'networkx',
             'matplotlib',
             # 'transformers==4.41.2',
-            'kgraphservice>=0.0.6'
+            'kgraphservice>=0.0.7'
     ],
     classifiers=[
         "Programming Language :: Python :: 3.10",
