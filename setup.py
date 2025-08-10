@@ -25,7 +25,9 @@ setup(
             'kgraphservice>=0.0.8',
             'scikit-learn',
             'scipy',
-            'numpy'
+            'numpy',
+            'pyoxigraph>=0.4.11',
+            'qdrant-client'
     ],
     classifiers=[
         "Programming Language :: Python :: 3.12",

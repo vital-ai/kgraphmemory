@@ -14,7 +14,7 @@ from kgraphmemory.kgraph import KGraph
 from kgraphmemory.kgresult_list import KGResultList
 from kgraphmemory.kgresult_match import KGResultMatch
 from kgraphmemory.kgstatus import KGStatus
-from kgraphmemory.utils.uri_generator import URIGenerator
+from vital_ai_vitalsigns.utils.uri_generator import URIGenerator
 
 
 class KGInteractionGraph(KGraph):

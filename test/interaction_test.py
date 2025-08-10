@@ -12,7 +12,7 @@ from ai_haley_kg_domain.model.properties.Property_hasKGSlotTypeDescription impor
 from vital_ai_vitalsigns.embedding.embedding_model import EmbeddingModel
 from vital_ai_vitalsigns.vitalsigns import VitalSigns
 from kgraphmemory.kginteraction_graph import KGInteractionGraph
-from kgraphmemory.utils.uri_generator import URIGenerator
+from vital_ai_vitalsigns.utils.uri_generator import URIGenerator
 import matplotlib.pyplot as plt
 import networkx as nx
 import logging

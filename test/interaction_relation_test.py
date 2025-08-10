@@ -2,7 +2,7 @@ from ai_haley_kg_domain.model.KGEntity import KGEntity
 from ai_haley_kg_domain.model.KGInteraction import KGInteraction
 
 from kgraphmemory.kginteraction_graph import KGInteractionGraph
-from kgraphmemory.utils.uri_generator import URIGenerator
+from vital_ai_vitalsigns.utils.uri_generator import URIGenerator
 
 
 def main():
