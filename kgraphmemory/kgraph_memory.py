@@ -1,14 +1,15 @@
 from typing import List, Dict, Any, Optional
 from vital_ai_vitalsigns.embedding.embedding_model import EmbeddingModel
 from .kgraph import KGraph
+from .kgraph_bridge import KGraphBridge
 from .default_vector_mappings import get_default_mappings
 
 
 class KGraphMemory:
     """
-    Memory manager for multiple KGraphs.
-    Manages creation, removal, lookup, and listing of KGraphs.
-    Ensures all KGraphs are created with the same embedding model.
+    Memory manager for multiple KGraphBridges.
+    Manages creation, removal, lookup, and listing of KGraphBridges.
+    Ensures all KGraphs are created with the same embedding model and accessed via bridges.
     """
     
     def __init__(self, embedding_model: EmbeddingModel, 
@@ -23,13 +24,14 @@ class KGraphMemory:
         self.embedding_model = embedding_model
         self.default_vector_mappings = default_vector_mappings or get_default_mappings()
         
-        # Registry of managed KGraphs
-        self._kgraphs: Dict[str, KGraph] = {}
+        # Registry of managed KGraphBridges (and their underlying KGraphs)
+        self._bridges: Dict[str, KGraphBridge] = {}
+        self._kgraphs: Dict[str, KGraph] = {}  # Keep internal reference for stats/cleanup
         
-    def create_kgraph(self, graph_id: str, graph_uri: str,
-                      vector_mappings: Optional[Dict[str, Dict[str, List[str]]]] = None) -> KGraph:
+    def create_kgraph_bridge(self, graph_id: str, graph_uri: str,
+                            vector_mappings: Optional[Dict[str, Dict[str, List[str]]]] = None) -> KGraphBridge:
         """
-        Create a new KGraph and add it to the memory.
+        Create a new KGraphBridge and add the underlying KGraph to memory.
         
         Args:
             graph_id: Unique identifier for the KGraph
@@ -37,18 +39,18 @@ class KGraphMemory:
             vector_mappings: Optional custom vector mappings (uses default if not provided)
             
         Returns:
-            The created KGraph instance
+            The created KGraphBridge instance
             
         Raises:
             ValueError: If graph_id already exists
         """
-        if graph_id in self._kgraphs:
-            raise ValueError(f"KGraph with ID '{graph_id}' already exists")
+        if graph_id in self._bridges:
+            raise ValueError(f"KGraphBridge with ID '{graph_id}' already exists")
         
         # Use provided mappings or default
         mappings = vector_mappings if vector_mappings else self.default_vector_mappings
         
-        # Create the KGraph
+        # Create the underlying KGraph
         kgraph = KGraph(
             graph_id=graph_id,
             embedding_model=self.embedding_model,
@@ -56,93 +58,102 @@ class KGraphMemory:
             vector_mappings=mappings
         )
         
-        # Register it
-        self._kgraphs[graph_id] = kgraph
+        # Wrap it in a bridge
+        bridge = KGraphBridge(
+            graph_id=graph_id,
+            embedding_model=self.embedding_model,
+            graph_uri=graph_uri,
+            vector_mappings=mappings
+        )
         
-        return kgraph
+        # Register both
+        self._bridges[graph_id] = bridge
+        self._kgraphs[graph_id] = kgraph  # Keep internal reference
+        
+        return bridge
     
-    def get_kgraph(self, graph_id: str) -> Optional[KGraph]:
+    def get_kgraph_bridge(self, graph_id: str) -> Optional[KGraphBridge]:
         """
-        Get a KGraph by its ID.
+        Get a KGraphBridge by its ID.
         
         Args:
-            graph_id: ID of the KGraph to retrieve
+            graph_id: ID of the KGraphBridge to retrieve
             
         Returns:
-            KGraph instance or None if not found
+            KGraphBridge instance or None if not found
         """
-        return self._kgraphs.get(graph_id)
+        return self._bridges.get(graph_id)
     
-    def remove_kgraph(self, graph_id: str) -> bool:
+    def remove_kgraph_bridge(self, graph_id: str) -> bool:
         """
-        Remove a KGraph from memory.
+        Remove a KGraphBridge and its underlying KGraph from memory.
         
         Args:
-            graph_id: ID of the KGraph to remove
+            graph_id: ID of the KGraphBridge to remove
             
         Returns:
             True if removed, False if not found
         """
-        if graph_id in self._kgraphs:
-            # Clear the KGraph data before removing
-            self._kgraphs[graph_id].clear()
-            del self._kgraphs[graph_id]
+        if graph_id in self._bridges:
+            # Clear the underlying KGraph data before removing
+            if graph_id in self._kgraphs:
+                self._kgraphs[graph_id].clear()
+                del self._kgraphs[graph_id]
+            del self._bridges[graph_id]
             return True
         return False
     
-    def list_kgraphs(self) -> List[str]:
+    def list_kgraph_bridges(self) -> List[str]:
         """
-        Get a list of all KGraph IDs.
+        Get a list of all KGraphBridge IDs.
         
         Returns:
-            List of KGraph IDs
+            List of KGraphBridge IDs
         """
-        return list(self._kgraphs.keys())
+        return list(self._bridges.keys())
     
-    def has_kgraph(self, graph_id: str) -> bool:
+    def has_kgraph_bridge(self, graph_id: str) -> bool:
         """
-        Check if a KGraph exists.
+        Check if a KGraphBridge exists.
         
         Args:
-            graph_id: ID of the KGraph to check
+            graph_id: ID of the KGraphBridge to check
             
         Returns:
             True if exists, False otherwise
         """
-        return graph_id in self._kgraphs
+        return graph_id in self._bridges
     
-    def get_kgraph_stats(self, graph_id: str) -> Optional[Dict[str, Any]]:
+    def get_kgraph_bridge_stats(self, graph_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get statistics for a specific KGraph.
+        Get statistics for a specific KGraphBridge.
         
         Args:
-            graph_id: ID of the KGraph
+            graph_id: ID of the KGraphBridge
             
         Returns:
             Statistics dictionary or None if not found
         """
-        kgraph = self.get_kgraph(graph_id)
-        return kgraph.get_stats() if kgraph else None
+        bridge = self.get_kgraph_bridge(graph_id)
+        return bridge.get_stats() if bridge else None
     
     def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
         """
-        Get statistics for all KGraphs.
+        Get statistics for all KGraphBridges.
         
         Returns:
             Dictionary mapping graph_id to statistics
         """
-        return {
-            graph_id: kgraph.get_stats()
-            for graph_id, kgraph in self._kgraphs.items()
-        }
+        return {graph_id: bridge.get_stats() for graph_id, bridge in self._bridges.items()}
     
     def clear_all(self):
         """
-        Clear all KGraphs from memory.
+        Clear all KGraphBridges and their underlying KGraphs from memory.
         """
         for kgraph in self._kgraphs.values():
             kgraph.clear()
         self._kgraphs.clear()
+        self._bridges.clear()
     
     def get_memory_stats(self) -> Dict[str, Any]:
         """
@@ -162,8 +173,8 @@ class KGraphMemory:
             total_objects += stats['registered_objects']
         
         return {
-            'total_kgraphs': len(self._kgraphs),
-            'kgraph_ids': list(self._kgraphs.keys()),
+            'total_kgraph_bridges': len(self._bridges),
+            'kgraph_bridge_ids': list(self._bridges.keys()),
             'total_rdf_triples': total_rdf_triples,
             'total_vector_records': total_vector_records,
             'total_objects': total_objects,
@@ -174,12 +185,12 @@ class KGraphMemory:
                               limit_per_graph: int = 5, 
                               filters: Optional[Dict[str, Any]] = None) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Search across all KGraphs in memory.
+        Search across all KGraphBridges in memory.
         
         Args:
             query_text: Text to search for
             vector_id: Optional specific vector type to search
-            limit_per_graph: Maximum results per KGraph
+            limit_per_graph: Maximum results per KGraphBridge
             filters: Optional metadata filters
             
         Returns:
@@ -187,17 +198,17 @@ class KGraphMemory:
         """
         results = {}
         
-        for graph_id, kgraph in self._kgraphs.items():
+        for graph_id, bridge in self._bridges.items():
             try:
                 if vector_id:
-                    graph_results = kgraph.vector_search_by_type(
+                    graph_results = bridge.vector_search_by_type(
                         query_text=query_text,
                         vector_id=vector_id,
                         limit=limit_per_graph,
                         filters=filters
                     )
                 else:
-                    graph_results = kgraph.vector_search(
+                    graph_results = bridge.vector_search(
                         query_text=query_text,
                         limit=limit_per_graph,
                         filters=filters
@@ -207,13 +218,13 @@ class KGraphMemory:
                     results[graph_id] = graph_results
                     
             except Exception as e:
-                print(f"Error searching KGraph '{graph_id}': {e}")
+                print(f"Error searching KGraphBridge '{graph_id}': {e}")
                 
         return results
     
     def sparql_query_across_kgraphs(self, query: str) -> Dict[str, List[Dict[str, Any]]]:
         """
-        Execute a SPARQL query across all KGraphs.
+        Execute a SPARQL query across all KGraphBridges.
         
         Args:
             query: SPARQL query string
@@ -223,13 +234,13 @@ class KGraphMemory:
         """
         results = {}
         
-        for graph_id, kgraph in self._kgraphs.items():
+        for graph_id, bridge in self._bridges.items():
             try:
-                graph_results = kgraph.sparql_query(query)
+                graph_results = bridge.sparql_query(query)
                 if graph_results:
                     results[graph_id] = graph_results
             except Exception as e:
-                print(f"Error executing SPARQL on KGraph '{graph_id}': {e}")
+                print(f"Error executing SPARQL on KGraphBridge '{graph_id}': {e}")
                 
         return results
     
@@ -254,9 +265,9 @@ class KGraphMemory:
     
     def count(self) -> int:
         """
-        Get the number of KGraphs in memory.
+        Get the number of KGraphBridges in memory.
         
         Returns:
-            Number of KGraphs
+            Number of KGraphBridges
         """
-        return len(self._kgraphs)
+        return len(self._bridges)

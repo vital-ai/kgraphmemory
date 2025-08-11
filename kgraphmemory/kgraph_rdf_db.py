@@ -4,6 +4,8 @@ from pyoxigraph import Store, Quad, NamedNode, BlankNode, Literal, Triple
 from pyoxigraph import Variable, QuerySolutions, QueryTriples, QueryBoolean
 from vital_ai_vitalsigns.vitalsigns import VitalSigns
 from vital_ai_vitalsigns.model.GraphObject import GraphObject
+from rdflib import URIRef as RDFLibURIRef, Literal as RDFLibLiteral, BNode as RDFLibBNode
+import logging
 
 # Follow VitalSigns TypeVar pattern for GraphObject type annotations
 G = TypeVar('G', bound=Optional['GraphObject'])
@@ -25,6 +27,8 @@ class KGraphRDFDB:
         self.store_id = store_id
         # Create in-memory store (no path provided)
         self.store = Store()
+        # Set up logger for this instance
+        self.logger = logging.getLogger(f"KGraphRDFDB.{store_id}")
         
     def add_triple(self, subject: Union[str, NamedNode, BlankNode], 
                    predicate: Union[str, NamedNode], 
@@ -51,12 +55,16 @@ class KGraphRDFDB:
             if graph:
                 g = self._to_rdf_term(graph, allow_literal=False, force_named_node=True)
                 quad = Quad(s, p, o, g)
+                self.logger.debug(f"Adding quad: ({s}, {p}, {o}, {g})")
             else:
                 quad = Quad(s, p, o)
+                self.logger.debug(f"Adding triple: ({s}, {p}, {o})")
                 
             self.store.add(quad)
+            self.logger.debug(f"Successfully added quad to store")
             return True
         except Exception as e:
+            self.logger.error(f"Error adding triple: {e}")
             print(f"Error adding triple: {e}")
             return False
     
@@ -238,15 +246,20 @@ class KGraphRDFDB:
             List of result bindings as dictionaries
         """
         try:
+            self.logger.debug(f"Executing SPARQL query: {query}")
             results = self.store.query(query)
+            self.logger.debug(f"Query returned results of type: {type(results)}")
             
             if isinstance(results, QuerySolutions):
                 # SELECT queries return QuerySolutions
                 result_list = []
                 # Get variable names from the QuerySolutions object
                 variables = results.variables
+                self.logger.debug(f"Query variables: {variables}")
                 
+                solution_count = 0
                 for solution in results:
+                    solution_count += 1
                     binding = {}
                     # Access solution values by index using the variable names
                     for i, variable in enumerate(variables):
@@ -258,6 +271,9 @@ class KGraphRDFDB:
                             # Skip if we can't access this variable
                             continue
                     result_list.append(binding)
+                    self.logger.debug(f"Solution {solution_count}: {binding}")
+                
+                self.logger.debug(f"Query returned {len(result_list)} solutions")
                 return result_list
             elif isinstance(results, QueryTriples):
                 # CONSTRUCT queries return QueryTriples
@@ -368,6 +384,142 @@ class KGraphRDFDB:
             print(f"Error loading RDF data: {e}")
             return False
     
+    def load_from_file_batch(self, file_path: str, format: str = "ntriples", 
+                           batch_size: int = 100000, progress_callback=None) -> bool:
+        """
+        Load RDF data from a file in batches for memory efficiency.
+        Uses pyoxigraph's bulk_load for optimal performance on large files.
+        
+        Args:
+            file_path: Path to the RDF file
+            format: RDF format (ntriples, turtle, rdf/xml, etc.)
+            batch_size: Number of lines to process in each batch (default 100k for better performance)
+            progress_callback: Optional callback function for progress reporting
+            
+        Returns:
+            True if loading was successful
+        """
+        try:
+            import os
+            from pyoxigraph import RdfFormat
+            
+            if not os.path.exists(file_path):
+                print(f"File not found: {file_path}")
+                return False
+            
+            # Map format strings to RdfFormat constants
+            format_map = {
+                "ntriples": RdfFormat.N_TRIPLES,
+                "nt": RdfFormat.N_TRIPLES,
+                "n-triples": RdfFormat.N_TRIPLES,
+                "turtle": RdfFormat.TURTLE,
+                "ttl": RdfFormat.TURTLE,
+                "rdf/xml": RdfFormat.RDF_XML,
+                "xml": RdfFormat.RDF_XML,
+                "nquads": RdfFormat.N_QUADS,
+                "nq": RdfFormat.N_QUADS,
+                "n-quads": RdfFormat.N_QUADS,
+                "trig": RdfFormat.TRIG,
+                "jsonld": RdfFormat.JSON_LD,
+                "json-ld": RdfFormat.JSON_LD
+            }
+            
+            rdf_format = format_map.get(format.lower(), RdfFormat.N_TRIPLES)
+            
+            total_lines = 0
+            processed_lines = 0
+            batch_lines = []
+            
+            # Count total lines for progress reporting
+            if progress_callback:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    total_lines = sum(1 for _ in f)
+                print(f"Total lines to process: {total_lines:,}")
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                for line_num, line in enumerate(f, 1):
+                    line = line.strip()
+                    if line and not line.startswith('#'):  # Skip empty lines and comments
+                        batch_lines.append(line)
+                    
+                    # Process batch when it reaches the specified size
+                    if len(batch_lines) >= batch_size:
+                        batch_data = '\n'.join(batch_lines)
+                        # Use bulk_load for better performance (no transactional guarantees)
+                        self.store.bulk_load(input=batch_data.encode('utf-8'), format=rdf_format)
+                        
+                        processed_lines += len(batch_lines)
+                        if progress_callback:
+                            progress_callback(processed_lines, total_lines, line_num)
+                        
+                        batch_lines = []  # Clear the batch
+                
+                # Process remaining lines in the final batch
+                if batch_lines:
+                    batch_data = '\n'.join(batch_lines)
+                    self.store.bulk_load(input=batch_data.encode('utf-8'), format=rdf_format)
+                    
+                    processed_lines += len(batch_lines)
+                    if progress_callback:
+                        progress_callback(processed_lines, total_lines, line_num)
+            
+            print(f"Successfully loaded {processed_lines:,} triples from {file_path}")
+            return True
+            
+        except Exception as e:
+            print(f"Error loading file {file_path}: {e}")
+            return False
+    
+    def bulk_load_file(self, file_path: str, format: str = "ntriples") -> bool:
+        """
+        Load an entire RDF file using pyoxigraph's bulk_load for maximum performance.
+        Best for large files where transactional guarantees are not needed.
+        
+        Args:
+            file_path: Path to the RDF file
+            format: RDF format (ntriples, turtle, rdf/xml, etc.)
+            
+        Returns:
+            True if loading was successful
+        """
+        try:
+            import os
+            from pyoxigraph import RdfFormat
+            
+            if not os.path.exists(file_path):
+                print(f"File not found: {file_path}")
+                return False
+            
+            # Map format strings to RdfFormat constants
+            format_map = {
+                "ntriples": RdfFormat.N_TRIPLES,
+                "nt": RdfFormat.N_TRIPLES,
+                "n-triples": RdfFormat.N_TRIPLES,
+                "turtle": RdfFormat.TURTLE,
+                "ttl": RdfFormat.TURTLE,
+                "rdf/xml": RdfFormat.RDF_XML,
+                "xml": RdfFormat.RDF_XML,
+                "nquads": RdfFormat.N_QUADS,
+                "nq": RdfFormat.N_QUADS,
+                "n-quads": RdfFormat.N_QUADS,
+                "trig": RdfFormat.TRIG,
+                "jsonld": RdfFormat.JSON_LD,
+                "json-ld": RdfFormat.JSON_LD
+            }
+            
+            rdf_format = format_map.get(format.lower(), RdfFormat.N_TRIPLES)
+            
+            print(f"Loading file {file_path} using bulk_load...")
+            # Use bulk_load with file path for maximum performance
+            self.store.bulk_load(path=file_path, format=rdf_format)
+            
+            print(f"Successfully bulk loaded {file_path}")
+            return True
+            
+        except Exception as e:
+            print(f"Error bulk loading file {file_path}: {e}")
+            return False
+    
     def serialize(self, format: str = "turtle") -> str:
         """
         Serialize the RDF store to a string.
@@ -405,8 +557,8 @@ class KGraphRDFDB:
     
     def add_graph_object_triples(self, graph_object: GraphObject, graph: Optional[Union[str, NamedNode]] = None) -> bool:
         """
-        Add RDF triples for a GraphObject using its to_dict() method.
-        Handles special cases for 'URI', 'type', and 'types' fields.
+        Add RDF triples for a GraphObject using property instances' to_rdf() methods.
+        This ensures proper XSD typing for all properties including datetime values.
         
         Args:
             graph_object: Concrete GraphObject instance (e.g., KGEntity, VITAL_Node, VITAL_Edge).
@@ -418,47 +570,33 @@ class KGraphRDFDB:
         """
         try:
             object_uri = str(graph_object.URI)
+            self.logger.debug(f"Adding GraphObject triples for: {object_uri}")
             
-            # Get property values using the built-in to_dict() method (returns structured data)
-            property_dict = graph_object.to_dict()
+            # Add class type triples
+            class_uri = graph_object.get_class_uri()
+            self.add_triple(object_uri, "http://www.w3.org/1999/02/22-rdf-syntax-ns#type", class_uri, graph)
+            self.add_triple(object_uri, "http://vital.ai/ontology/vital-core#vitaltype", class_uri, graph)
             
-            # Collect all unique type URIs first
-            type_uris = set()
-            
-            # Handle type properties to collect unique types
-            if 'type' in property_dict and property_dict['type']:
-                type_uris.add(str(property_dict['type']))
-            
-            if 'types' in property_dict and property_dict['types']:
-                if isinstance(property_dict['types'], list):
-                    for type_uri in property_dict['types']:
-                        if type_uri:
-                            type_uris.add(str(type_uri))
-                else:
-                    type_uris.add(str(property_dict['types']))
-            
-            # Add unique rdf:type triples
-            rdf_type_predicate = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
-            for type_uri in type_uris:
-                self.add_triple(object_uri, rdf_type_predicate, type_uri, graph)
-            
-            # Handle URI property mapping
-            if 'URI' in property_dict and property_dict['URI']:
-                uri_property = "http://vital.ai/ontology/vital-core#URIProp"
-                self.add_triple(object_uri, uri_property, str(property_dict['URI']), graph)
-            
-            # Add other property triples using URIs directly from dictionary
-            for prop_uri, value in property_dict.items():
-                if prop_uri not in ['URI', 'type', 'types'] and value is not None:
-                    # Regular property
-                    if isinstance(value, list):
-                        # Skip other list values for now
+            # Access property instances directly from _properties and use their to_rdf() method
+            if hasattr(graph_object, '_properties'):
+                for prop_uri, prop_instance in graph_object._properties.items():
+                    try:
+                        # Get RDF data from property instance with proper XSD typing
+                        rdf_data = prop_instance.to_rdf()
+                        self.logger.debug(f"Property {prop_uri} RDF data: {rdf_data}")
+                        
+                        # Add triple with proper typing based on RDF data
+                        self._add_property_triple(object_uri, prop_uri, rdf_data, graph)
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Error processing property {prop_uri}: {e}")
                         continue
-                    else:
-                        self.add_triple(object_uri, prop_uri, str(value), graph)
             
+            self.logger.debug(f"Successfully added triples for {object_uri}")
             return True
+            
         except Exception as e:
+            self.logger.error(f"Error adding GraphObject triples: {e}")
             print(f"Error adding GraphObject triples: {e}")
             return False
     
@@ -486,35 +624,15 @@ class KGraphRDFDB:
             from rdflib import URIRef, Literal, BNode
             
             def triple_generator():
-                for subject, predicate, obj, graph_name in triples:
-                    # Clean all URI strings by removing angle brackets
-                    clean_subject = subject.strip('<>')
-                    clean_predicate = predicate.strip('<>')
-                    clean_obj = obj.strip('<>')
+                for quad in triples:
+                    subject, predicate, obj, graph_name = quad
                     
-                    # Convert subject to proper RDFLib object
-                    if clean_subject.startswith('_:'):
-                        # Blank node
-                        rdf_subject = BNode(clean_subject[2:])  # Remove '_:' prefix
-                    else:
-                        # URI reference
-                        rdf_subject = URIRef(clean_subject)
-                    
-                    # Convert predicate to URIRef (predicates are always URIs)
-                    rdf_predicate = URIRef(clean_predicate)
-                    
-                    # Convert object to proper RDFLib object
-                    if clean_obj.startswith('_:'):
-                        # Blank node
-                        rdf_object = BNode(clean_obj[2:])  # Remove '_:' prefix
-                    elif clean_obj.startswith('http://') or clean_obj.startswith('https://'):
-                        # URI reference
-                        rdf_object = URIRef(clean_obj)
-                    else:
-                        # Literal value - strip quotes if present
-                        clean_literal = obj.strip('<>').strip('"').strip("'")
-                        rdf_object = Literal(clean_literal)
-                    
+                    # Convert pyoxigraph objects to RDFLib objects for VitalSigns compatibility
+                    # VitalSigns from_triples() expects RDFLib URIRef/Literal objects
+                    rdf_subject = self._to_rdflib_term(subject)
+                    rdf_predicate = self._to_rdflib_term(predicate)
+                    rdf_object = self._to_rdflib_term(obj)
+                        
                     yield (rdf_subject, rdf_predicate, rdf_object)
             
             # Use VitalSigns to create GraphObject from triples
@@ -524,8 +642,91 @@ class KGraphRDFDB:
             return graph_object
             
         except Exception as e:
-            print(f"Error retrieving GraphObject for {subject_uri}: {e}")
+            self.logger.error(f"Error retrieving GraphObject for {subject_uri}: {e}")
             return None
+    
+    def get_graph_objects_batch(self, subject_uris: List[str], graph: Optional[Union[str, NamedNode]] = None) -> Dict[str, G]:
+        """
+        Retrieve multiple GraphObjects by URIs in a single batch operation.
+        Uses pyoxigraph's efficient quads_for_pattern method for better performance.
+        
+        Args:
+            subject_uris: List of subject URIs to retrieve
+            graph: Optional named graph to search in
+            
+        Returns:
+            Dictionary mapping subject URIs to GraphObject instances (excludes objects not found)
+        """
+        if not subject_uris:
+            return {}
+        
+        try:
+            from pyoxigraph import NamedNode
+            from rdflib import URIRef, Literal, BNode
+            
+            # Convert graph parameter to pyoxigraph format
+            graph_node = None
+            if graph:
+                if isinstance(graph, str):
+                    graph_node = NamedNode(graph)
+                else:
+                    graph_node = graph
+            
+            # Collect all triples for all subjects in one efficient operation
+            all_triples = {}
+            
+            # Use pyoxigraph's quads_for_pattern for efficient batch retrieval
+            for subject_uri in subject_uris:
+                try:
+                    subject_node = NamedNode(subject_uri)
+                    # Get all quads where this URI is the subject
+                    quads = list(self.store.quads_for_pattern(subject=subject_node, predicate=None, object=None, graph_name=graph_node))
+                    
+                    if quads:
+                        # Convert pyoxigraph quads to string format for consistency
+                        triples = []
+                        for quad in quads:
+                            subject_str = str(quad.subject)
+                            predicate_str = str(quad.predicate) 
+                            object_str = str(quad.object)
+                            graph_str = str(quad.graph_name) if quad.graph_name else None
+                            triples.append((subject_str, predicate_str, object_str, graph_str))
+                        
+                        all_triples[subject_uri] = triples
+                        
+                except Exception as e:
+                    print(f"Warning: Could not retrieve triples for {subject_uri}: {e}")
+                    continue
+            
+            # Convert collected triples to GraphObjects using VitalSigns
+            result_objects = {}
+            vs = VitalSigns()
+            
+            for subject_uri, triples in all_triples.items():
+                try:
+                    def triple_generator():
+                        for subject, predicate, obj, graph_name in triples:
+                            # Convert pyoxigraph objects to RDFLib objects for VitalSigns compatibility
+                            rdf_subject = self._to_rdflib_term(subject)
+                            rdf_predicate = self._to_rdflib_term(predicate)
+                            rdf_object = self._to_rdflib_term(obj)
+                            
+                            yield (rdf_subject, rdf_predicate, rdf_object)
+                    
+                    # Use VitalSigns to create GraphObject from triples
+                    graph_object = vs.from_triples(triple_generator())
+                    if graph_object:
+                        result_objects[subject_uri] = graph_object
+                        
+                except Exception as e:
+                    print(f"Warning: Could not reconstruct GraphObject for {subject_uri}: {e}")
+                    continue
+            
+            return result_objects
+            
+        except Exception as e:
+            print(f"Error in batch GraphObject retrieval: {e}")
+            return {}
     
     def clear(self):
         """
@@ -543,6 +744,350 @@ class KGraphRDFDB:
         # Note: pyoxigraph doesn't have built-in namespace management
         # This would need to be implemented separately if needed
         return {}
+    
+    def _add_property_triple(self, subject_uri: str, prop_uri: str, rdf_data: Dict[str, Any], graph: Optional[Union[str, NamedNode]] = None) -> bool:
+        """
+        Add a property triple using RDF data from property instance's to_rdf() method.
+        
+        Args:
+            subject_uri: Subject URI
+            prop_uri: Property URI
+            rdf_data: RDF data dictionary from prop_instance.to_rdf()
+            graph: Optional named graph
+            
+        Returns:
+            True if triple was added successfully
+        """
+        try:
+            datatype = rdf_data.get("datatype")
+            value = rdf_data.get("value")
+            
+            if value is None:
+                return False
+            
+            if datatype == list:
+                # Handle list values
+                value_list = value
+                data_class = rdf_data.get("data_class")
+                
+                for v in value_list:
+                    if data_class and hasattr(data_class, '__name__') and 'URIRef' in data_class.__name__:
+                        # URI reference
+                        self.add_triple(subject_uri, prop_uri, str(v), graph)
+                    else:
+                        # Literal with datatype
+                        typed_literal = self._create_typed_literal(v, data_class)
+                        self.add_triple(subject_uri, prop_uri, typed_literal, graph)
+            
+            elif hasattr(datatype, '__name__') and 'URIRef' in datatype.__name__:
+                # URI reference
+                self.add_triple(subject_uri, prop_uri, str(value), graph)
+            
+            else:
+                # Literal with XSD datatype
+                typed_literal = self._create_typed_literal(value, datatype)
+                self.add_triple(subject_uri, prop_uri, typed_literal, graph)
+            
+            return True
+            
+        except Exception as e:
+            self.logger.warning(f"Error adding property triple for {prop_uri}: {e}")
+            return False
+    
+    def _create_typed_literal(self, value: Any, datatype: Any) -> Union[str, Literal]:
+        """
+        Create a properly typed literal based on the datatype from property RDF data.
+        
+        Args:
+            value: Property value
+            datatype: Datatype from property RDF data
+            
+        Returns:
+            Typed literal or plain string
+        """
+        try:
+            # Handle different datatype formats
+            if hasattr(datatype, '__name__'):
+                datatype_name = datatype.__name__
+            elif hasattr(datatype, 'toPython'):
+                # RDFLib datatype
+                return Literal(str(value), datatype=NamedNode(str(datatype)))
+            elif isinstance(datatype, str) and datatype.startswith('http'):
+                # Direct XSD URI
+                return Literal(str(value), datatype=NamedNode(datatype))
+            else:
+                datatype_name = str(datatype)
+            
+            # Map Python types to XSD types (similar to GraphObject.to_rdf())
+            if 'datetime' in datatype_name.lower():
+                return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#dateTime"))
+            elif 'int' in datatype_name.lower():
+                return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#integer"))
+            elif 'float' in datatype_name.lower():
+                return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#float"))
+            elif 'bool' in datatype_name.lower():
+                return Literal(str(value).lower(), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#boolean"))
+            else:
+                # Default to string
+                return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#string"))
+                
+        except Exception as e:
+            self.logger.warning(f"Error creating typed literal for value '{value}' with datatype '{datatype}': {e}")
+            # Fallback to plain string
+            return str(value)
+    
+    def _parse_ntriples(self, ntriples_data: str) -> List[tuple]:
+        """
+        Parse N-Triples data and extract individual triples.
+        
+        Args:
+            ntriples_data: N-Triples formatted RDF data
+            
+        Returns:
+            List of (subject, predicate, object) tuples
+        """
+        triples = []
+        
+        try:
+            # Split into lines and process each triple
+            lines = ntriples_data.strip().split('\n')
+            
+            for line in lines:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                # Parse N-Triple line: <subject> <predicate> <object> .
+                # Handle both URI and literal objects
+                parts = self._parse_ntriple_line(line)
+                if parts:
+                    triples.append(parts)
+            
+            self.logger.debug(f"Parsed {len(triples)} triples from N-Triples data")
+            return triples
+            
+        except Exception as e:
+            self.logger.error(f"Error parsing N-Triples data: {e}")
+            return []
+    
+    def _parse_ntriple_line(self, line: str) -> Optional[tuple]:
+        """
+        Parse a single N-Triple line into subject, predicate, object.
+        
+        Args:
+            line: Single N-Triple line
+            
+        Returns:
+            Tuple of (subject, predicate, object) or None if parsing fails
+        """
+        try:
+            # Remove trailing period and whitespace
+            line = line.rstrip(' .')
+            
+            # Find the positions of the three components
+            # Subject: always starts with < and ends with >
+            if not line.startswith('<'):
+                return None
+            
+            subject_end = line.find('>', 1)
+            if subject_end == -1:
+                return None
+            
+            subject = line[1:subject_end]  # Remove < >
+            
+            # Find predicate: starts after subject
+            remaining = line[subject_end + 1:].strip()
+            if not remaining.startswith('<'):
+                return None
+            
+            predicate_end = remaining.find('>', 1)
+            if predicate_end == -1:
+                return None
+            
+            predicate = remaining[1:predicate_end]  # Remove < >
+            
+            # Object: everything after predicate
+            obj_part = remaining[predicate_end + 1:].strip()
+            
+            # Parse object - could be URI <...> or literal "..."^^<datatype>
+            if obj_part.startswith('<') and obj_part.endswith('>'):
+                # URI object
+                obj = obj_part[1:-1]  # Remove < >
+            elif obj_part.startswith('"'):
+                # Literal object - may have datatype
+                obj = self._parse_literal_object(obj_part)
+            else:
+                # Plain literal
+                obj = obj_part
+            
+            return (subject, predicate, obj)
+            
+        except Exception as e:
+            self.logger.warning(f"Error parsing N-Triple line '{line}': {e}")
+            return None
+    
+    def _to_rdflib_term(self, term):
+        """
+        Convert pyoxigraph terms to RDFLib terms for VitalSigns compatibility.
+        Only converts when interfacing with VitalSigns - keeps pyoxigraph types elsewhere.
+        
+        Args:
+            term: Pyoxigraph NamedNode, BlankNode, Literal, or string
+            
+        Returns:
+            Corresponding RDFLib URIRef, BNode, or Literal
+        """
+        if isinstance(term, NamedNode):
+            return RDFLibURIRef(str(term))
+        elif isinstance(term, BlankNode):
+            return RDFLibBNode(str(term))
+        elif isinstance(term, Literal):
+            # Pyoxigraph Literal - convert to RDFLib Literal with proper XSD typing
+            value = term.value
+            datatype = term.datatype
+            if datatype:
+                return RDFLibLiteral(value, datatype=RDFLibURIRef(str(datatype)))
+            else:
+                return RDFLibLiteral(value)
+        else:
+            # String representation - parse for XSD typing
+            term_str = str(term)
+            if term_str.startswith('<') and term_str.endswith('>'):
+                # URI reference
+                return RDFLibURIRef(term_str.strip('<>'))
+            elif term_str.startswith('_:'):
+                # Blank node
+                return RDFLibBNode(term_str[2:])
+            else:
+                # Literal - use existing parser for XSD typing
+                return self._parse_stored_literal(term_str)
+    
+    def _parse_stored_literal(self, stored_literal: str) -> RDFLibLiteral:
+        """
+        Parse a stored literal value that may contain XSD datatype information.
+        Handles both plain literals and XSD-typed literals from RDF storage.
+        Returns RDFLib Literal objects that VitalSigns can process with toPython().
+        
+        Args:
+            stored_literal: Literal string from RDF store (may include XSD typing)
+            
+        Returns:
+            Properly typed RDFLib Literal object
+        """
+        try:
+            # Check if this is an XSD-typed literal: "value"^^<datatype>
+            if '^^<' in stored_literal:
+                # Split on ^^< to separate value and datatype
+                value_part, datatype_part = stored_literal.split('^^<', 1)
+                
+                # Remove quotes from value
+                value = value_part.strip('"').strip("'")
+                
+                # Remove > from datatype and create URIRef
+                datatype_uri = datatype_part.rstrip('>')
+                
+                # Return as RDFLib Literal with proper datatype
+                # This allows VitalSigns to use obj_value.toPython() correctly
+                return RDFLibLiteral(value, datatype=RDFLibURIRef(datatype_uri))
+            else:
+                # Plain literal - just remove quotes and angle brackets
+                clean_value = stored_literal.strip('<>').strip('"').strip("'")
+                return RDFLibLiteral(clean_value)
+                
+        except Exception as e:
+            self.logger.warning(f"Error parsing stored literal '{stored_literal}': {e}")
+            # Fallback to plain literal
+            clean_value = stored_literal.strip('<>').strip('"').strip("'")
+            return RDFLibLiteral(clean_value)
+    
+    def _parse_literal_object(self, literal_part: str) -> Union[str, Literal]:
+        """
+        Parse a literal object that may have XSD datatype information.
+        
+        Args:
+            literal_part: Literal part of N-Triple (e.g., "value"^^<datatype>)
+            
+        Returns:
+            Literal object with proper datatype or plain string
+        """
+        try:
+            # Check if it has datatype: "value"^^<datatype>
+            if '^^<' in literal_part:
+                # Split on ^^< to separate value and datatype
+                value_part, datatype_part = literal_part.split('^^<', 1)
+                
+                # Remove quotes from value
+                value = value_part.strip('"')
+                
+                # Remove > from datatype
+                datatype = datatype_part.rstrip('>')
+                
+                # Return as pyoxigraph Literal with datatype
+                return Literal(value, datatype=NamedNode(datatype))
+            else:
+                # Plain literal - remove quotes
+                return literal_part.strip('"')
+                
+        except Exception as e:
+            self.logger.warning(f"Error parsing literal '{literal_part}': {e}")
+            # Fallback to plain string
+            return literal_part.strip('"')
+    
+    def _get_typed_literal(self, graph_object: GraphObject, prop_uri: str, value: Any) -> Union[NamedNode, BlankNode, Literal]:
+        """
+        Get a properly typed RDF literal based on VitalSigns property metadata.
+        
+        Args:
+            graph_object: The GraphObject instance to get property metadata from
+            prop_uri: Property URI
+            value: Property value
+            
+        Returns:
+            Properly typed RDF term
+        """
+        try:
+            # Get property metadata from the GraphObject
+            allowed_props = graph_object.get_allowed_properties()
+            prop_metadata = None
+            
+            # Find the property metadata by URI
+            for prop in allowed_props:
+                if str(prop.get('uri', '')) == prop_uri:
+                    prop_metadata = prop
+                    break
+            
+            if prop_metadata:
+                prop_class = prop_metadata.get('prop_class')
+                self.logger.debug(f"Property {prop_uri} has class: {prop_class}")
+                
+                # Handle different property types with proper XSD typing
+                if prop_class:
+                    class_name = prop_class.__name__ if hasattr(prop_class, '__name__') else str(prop_class)
+                    
+                    if 'DateTime' in class_name:
+                        # DateTime property - use xsd:dateTime
+                        return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#dateTime"))
+                    elif 'Date' in class_name:
+                        # Date property - use xsd:date
+                        return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#date"))
+                    elif 'Long' in class_name or 'Integer' in class_name:
+                        # Numeric property - use xsd:long or xsd:integer
+                        return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#long"))
+                    elif 'Double' in class_name or 'Float' in class_name:
+                        # Decimal property - use xsd:double
+                        return Literal(str(value), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#double"))
+                    elif 'Boolean' in class_name:
+                        # Boolean property - use xsd:boolean
+                        return Literal(str(value).lower(), datatype=NamedNode("http://www.w3.org/2001/XMLSchema#boolean"))
+            
+            # Default: return as string literal
+            self.logger.debug(f"No specific typing found for {prop_uri}, using string literal")
+            return Literal(str(value))
+            
+        except Exception as e:
+            self.logger.warning(f"Error getting typed literal for {prop_uri}: {e}")
+            # Fallback to string literal
+            return Literal(str(value))
     
     def _to_rdf_term(self, term: Union[str, NamedNode, BlankNode, Literal], 
                      allow_literal: bool = True, 

@@ -90,7 +90,44 @@ DEFAULT_VECTOR_MAPPINGS = {
     "http://vital.ai/ontology/haley-ai-kg#KGInteraction": {
         "general": [
             "http://vital.ai/ontology/vital-core#hasName",
-            "http://vital.ai/ontology/vital-core#hasDescription"
+            "http://vital.ai/ontology/vital-core#hasDescription",
+            "http://vital.ai/ontology/haley-ai-kg#hasKGraphDescription"
+        ],
+        "description": [
+            "http://vital.ai/ontology/haley-ai-kg#hasKGraphDescription"
+        ],
+        "name": [
+            "http://vital.ai/ontology/vital-core#hasName"
+        ]
+    },
+    
+    # KG Actor types
+    "http://vital.ai/ontology/haley-ai-kg#KGActor": {
+        "general": [
+            "http://vital.ai/ontology/vital-core#hasName",
+            "http://vital.ai/ontology/vital-core#hasDescription",
+            "http://vital.ai/ontology/haley-ai-kg#hasKGraphDescription"
+        ],
+        "description": [
+            "http://vital.ai/ontology/haley-ai-kg#hasKGraphDescription"
+        ],
+        "name": [
+            "http://vital.ai/ontology/vital-core#hasName"
+        ]
+    },
+    
+    # KG Agent types
+    "http://vital.ai/ontology/haley-ai-kg#KGAgent": {
+        "general": [
+            "http://vital.ai/ontology/vital-core#hasName",
+            "http://vital.ai/ontology/vital-core#hasDescription",
+            "http://vital.ai/ontology/haley-ai-kg#hasKGraphDescription"
+        ],
+        "description": [
+            "http://vital.ai/ontology/haley-ai-kg#hasKGraphDescription"
+        ],
+        "name": [
+            "http://vital.ai/ontology/vital-core#hasName"
         ]
     },
     

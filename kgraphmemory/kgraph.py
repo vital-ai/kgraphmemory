@@ -14,7 +14,7 @@ from .default_vector_mappings import (
     get_default_mappings, get_vector_mappings_for_type, 
     get_vector_properties_for_type, get_available_vector_ids_for_type
 )
-
+import logging
 
 class KGraph:
     """
@@ -38,8 +38,13 @@ class KGraph:
         self.embedding_model = embedding_model
         self.graph_uri = graph_uri
         
+        # Set up logger for this instance
+        self.logger = logging.getLogger(f"KGraph.{graph_id}")
+        self.logger.debug(f"Initializing KGraph: {graph_id} with graph_uri: {graph_uri}")
+        
         # Use custom mappings or defaults
         self.vector_mappings = vector_mappings if vector_mappings else get_default_mappings()
+        self.logger.debug(f"Vector mappings configured: {len(self.vector_mappings)} object types")
         
         # Initialize paired stores
         self.rdf_store = KGraphRDFDB(f"{graph_id}_rdf")
@@ -62,6 +67,7 @@ class KGraph:
         try:
             object_uri = str(graph_object.URI)
             object_type = graph_object.get_class_uri()
+            self.logger.debug(f"Adding object: {object_uri} of type: {object_type}")
             
             # Add RDF triples directly from object properties
             rdf_success = self._add_graph_object_triples(graph_object)
@@ -174,39 +180,7 @@ class KGraph:
             print(f"Error removing object {object_uri}: {e}")
             return False
     
-    def get_object_by_uri(self, object_uri: str) -> Optional[Dict[str, Any]]:
-        """
-        Retrieve an object's data from both stores.
-        
-        Args:
-            object_uri: URI of the object
-            
-        Returns:
-            Dictionary with RDF and vector data, or None if not found
-        """
-        try:
-            # Get RDF triples
-            rdf_triples = self.rdf_store.get_triples(
-                subject=object_uri, 
-                graph=self.graph_uri
-            )
-            
-            # Get vector data
-            vector_data = self.vector_store.get_by_id(object_uri)
-            
-            if rdf_triples or vector_data:
-                return {
-                    'uri': object_uri,
-                    'rdf_triples': rdf_triples,
-                    'vector_data': vector_data,
-                    'object_type': self._object_registry.get(object_uri)
-                }
-            
-            return None
-            
-        except Exception as e:
-            print(f"Error retrieving object {object_uri}: {e}")
-            return None
+
     
     def sparql_query(self, query: str) -> List[Dict[str, Any]]:
         """
@@ -216,9 +190,12 @@ class KGraph:
             query: SPARQL query string
             
         Returns:
-            List of query results
+            List of result bindings
         """
-        return self.rdf_store.sparql_query(query)
+        self.logger.debug(f"Executing SPARQL query via KGraph")
+        results = self.rdf_store.sparql_query(query)
+        self.logger.debug(f"SPARQL query returned {len(results)} results")
+        return results
     
     def sparql_construct(self, query: str) -> List[tuple]:
         """
@@ -359,7 +336,7 @@ class KGraph:
             
             if self.sparql_ask(ask_query):
                 # Enrich with RDF data
-                rdf_data = self.get_object_by_uri(object_uri)
+                rdf_data = self.get_object(object_uri)
                 result['rdf_data'] = rdf_data
                 filtered_results.append(result)
                 
@@ -568,6 +545,19 @@ class KGraph:
             GraphObject instance or None if not found
         """
         return self.rdf_store.get_graph_object(object_uri, self.graph_uri)
+    
+    def get_objects_batch(self, object_uris: List[str]) -> Dict[str, G]:
+        """
+        Retrieve multiple GraphObjects by URIs in a single batch operation.
+        Uses efficient pyoxigraph batch retrieval for better performance.
+        
+        Args:
+            object_uris: List of URIs to retrieve
+            
+        Returns:
+            Dictionary mapping URIs to GraphObject instances (excludes objects not found)
+        """
+        return self.rdf_store.get_graph_objects_batch(object_uris, self.graph_uri)
     
     def get_object_list(self, object_uris: List[str]) -> List[G]:
         """

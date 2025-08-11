@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Test script for KGEntity functionality with KGraphMemory.
-Demonstrates creating entities, storing them in a KGraph, and performing SPARQL and vector queries.
+Test script for KGEntity functionality with KGraphBridge architecture.
+Demonstrates creating entities, storing them via bridges, and performing SPARQL and vector queries.
 """
 
 import sys
 import warnings
 import os
 from typing import List, Dict, Any
+from datetime import datetime
 
 # Add the parent directory to the path to import kgraphmemory
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,9 +19,9 @@ from vital_ai_vitalsigns.vitalsigns import VitalSigns
 # Import existing KGEntity class
 from ai_haley_kg_domain.model.KGEntity import KGEntity
 
-# Import our KGraph components
+# Import our KGraph components with new bridge architecture
 from kgraphmemory.kgraph_memory import KGraphMemory
-from kgraphmemory.kgraph import KGraph
+from kgraphmemory.kgraph_bridge import KGraphBridge
 
 
 def create_test_entities() -> List[KGEntity]:
@@ -142,9 +143,9 @@ def print_results(results: List[Dict[str, Any]], title: str, limit: int = 10):
 
 
 def main():
-    """Main test function demonstrating KGEntity functionality."""
+    """Main test function demonstrating KGraphBridge functionality."""
     
-    print("=== KGEntity and KGraphMemory Test Script ===\n")
+    print("=== KGEntity and KGraphBridge Test Script ===\n")
     
     # Initialize VitalSigns (required for VITAL objects)
     vs = VitalSigns()
@@ -161,35 +162,33 @@ def main():
     print("1. Creating KGraphMemory...")
     memory = KGraphMemory(embedding_model)
     
-    # Create a KGraph
-    print("2. Creating KGraph...")
-    graph = memory.create_kgraph(
+    # Create a KGraphBridge (updated architecture)
+    print("2. Creating KGraphBridge...")
+    bridge = memory.create_kgraph_bridge(
         graph_id="test_entities",
         graph_uri="http://example.com/graphs/test_entities"
     )
     
-    # Create and store test entities
-    print("3. Creating and storing test entities...")
+    # Create and store test entities using bridge
+    print("3. Creating and storing test entities via bridge...")
     entities = create_test_entities()
     
-    # for entity in entities:
-    #    print(entity.to_json())
-
+    # Store entities using the bridge's entity management
     for entity in entities:
-        success = graph.add_object(entity)
+        success = bridge.add_object(entity)
         print(f"   Added entity: {entity.name} ({entity.kGEntityTypeDescription}) - Success: {success}")
     
     # Get statistics
-    print(f"\n4. Graph Statistics:")
-    stats = graph.get_stats()
+    print(f"\n4. Bridge Statistics:")
+    stats = bridge.get_stats()
     for key, value in stats.items():
         print(f"   {key}: {value}")
     
-    # Test SPARQL queries
-    print(f"\n5. Testing SPARQL Queries:")
+    # Test SPARQL queries via bridge
+    print(f"\n5. Testing SPARQL Queries via Bridge:")
     
     # Get the graph URI for named graph queries
-    graph_uri = graph.graph_uri
+    graph_uri = bridge.get_graph_uri()
     
     # First, let's see what's actually in the RDF store (query named graph)
     debug_query = f"""
@@ -200,7 +199,7 @@ def main():
     }} LIMIT 10
     """
     
-    debug_results = graph.sparql_query(debug_query)
+    debug_results = bridge.sparql_query(debug_query)
     print_results(debug_results, "First 10 RDF triples (debug)")
     
     # Query for all type triples to see what class URIs are used
@@ -212,7 +211,7 @@ def main():
     }}
     """
     
-    type_results = graph.sparql_query(type_query)
+    type_results = bridge.sparql_query(type_query)
     print_results(type_results, "All type triples")
     
     # Query for all entities (updated based on what we find)
@@ -226,7 +225,7 @@ def main():
     }} LIMIT 10
     """
     
-    sparql_results1 = graph.sparql_query(sparql_query1)
+    sparql_results1 = bridge.sparql_query(sparql_query1)
     print_results(sparql_results1, "All KGEntity triples")
     
     # Query for technology corporations (should work now with fixed RDF storage)
@@ -249,35 +248,35 @@ def main():
     }} LIMIT 5
     """
     
-    sparql_results2 = graph.sparql_query(sparql_query2)
+    sparql_results2 = bridge.sparql_query(sparql_query2)
     print_results(sparql_results2, "Technology corporations")
     
     # Always run the alternative query to debug
-    sparql_results2_alt = graph.sparql_query(sparql_query2_alt)
+    sparql_results2_alt = bridge.sparql_query(sparql_query2_alt)
     print_results(sparql_results2_alt, "Technology corporations (alternative query - debug)")
     
-    # Test Vector Searches
-    print(f"\n6. Testing Vector Searches:")
+    # Test Vector Searches via Bridge
+    print(f"\n6. Testing Vector Searches via Bridge:")
     
     # Search by entity type
     print("\n--- Searching by Entity Type ---")
-    type_results1 = graph.vector_search_by_type("technology company", "entity_type", limit=5)
+    type_results1 = bridge.vector_search_by_type("technology company", "entity_type", limit=5)
     print_results(type_results1, "Entity Type Search: 'technology company'")
     
-    type_results2 = graph.vector_search_by_type("person", "entity_type", limit=5)
+    type_results2 = bridge.vector_search_by_type("person", "entity_type", limit=5)
     print_results(type_results2, "Entity Type Search: 'person'")
     
     # Search by entity value
     print("\n--- Searching by Entity Value ---")
-    value_results1 = graph.vector_search_by_type("Apple computer company", "entity_value", limit=5)
+    value_results1 = bridge.vector_search_by_type("Apple computer company", "entity_value", limit=5)
     print_results(value_results1, "Entity Value Search: 'Apple computer company'")
     
-    value_results2 = graph.vector_search_by_type("artificial intelligence", "entity_value", limit=5)
+    value_results2 = bridge.vector_search_by_type("artificial intelligence", "entity_value", limit=5)
     print_results(value_results2, "Entity Value Search: 'artificial intelligence'")
     
     # General vector search (across all vectors)
     print("\n--- General Vector Search ---")
-    general_results = graph.vector_search("Microsoft software", limit=5)
+    general_results = bridge.vector_search("Microsoft software", limit=5)
     print_results(general_results, "General Vector Search: 'Microsoft software'")
     
     # Test cross-graph search via memory
@@ -296,10 +295,10 @@ def main():
     print(f"\n=== Test Complete ===")
     print(f"Successfully demonstrated:")
     print(f"  - KGEntity creation and property setting")
-    print(f"  - KGraphMemory and KGraph integration")
+    print(f"  - KGraphMemory and KGraphBridge integration")
     print(f"  - Multi-vector storage (entity_type and entity_value)")
-    print(f"  - SPARQL queries on RDF store")
-    print(f"  - Vector similarity searches by type")
+    print(f"  - SPARQL queries on RDF store via bridge")
+    print(f"  - Vector similarity searches by type via bridge")
     print(f"  - Cross-graph search capabilities")
     print(f"  - Search result containers with similarity scores")
 

@@ -210,14 +210,14 @@ class KGraphVectorDB:
         if filters:
             query_filter = self._build_filter(filters)
         
-        # Use the search API (keeping the working version for now)
-        results = self.client.search(
+        # Use the query_points API (updated from deprecated search method)
+        results = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=query_filter,
             limit=limit,
             score_threshold=score_threshold
-        )
+        ).points
         
         return [
             {
